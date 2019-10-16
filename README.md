@@ -25,16 +25,13 @@ These instructions have only been tested on Ubuntu, but should also work on othe
     
     ```
 
-4. Clone this repo and install dependencies, run setup.py:
+4. Clone this repo and install dependencies:
     ```bash
     git clone https://github.com/imagirom/YeastInference.git
     cd YeastInference
     pip install -r requirements.txt
     pip install -e git+https://github.com/inferno-pytorch/inferno@cache-reject#egg=inferno-0.3.1
     ```
-    
-5. Download the [model](https://heibox.uni-heidelberg.de/f/c0a6d4075fe940f495aa/?dl=1)
-and save it in the `YeastInference` folder.
 
 ## Usage
 
