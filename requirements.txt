@@ -1,0 +1,8 @@
+numpy==1.17.2
+scipy==1.1.0
+tqdm==4.36.1
+h5py==2.9.0
+dill==0.3.0
+networkx==2.3
+pyyaml==4.2b4
+-e git+https://github.com/Steffen-Wolf/embeddingutils#egg=embeddingutils-0.1
