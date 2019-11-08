@@ -441,7 +441,8 @@ if __name__ == '__main__':
     parser.add_argument('--use_gpu', '-g', dest='use_gpu', action='store_const',
                         const=True, default=False,
                         help='Whether or not to use the GPU. ')
-    parser.add_argument('--min_size', type=int, default=100)
+    parser.add_argument('--min_size', type=int, default=100,
+                        help='Minimum cell size. Smaller segments will be removed from the prediction.')
     args = parser.parse_args()
 
     model_path = args.model
