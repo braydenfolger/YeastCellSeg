@@ -4,6 +4,7 @@ import torch
 from torch.utils.data.dataset import Dataset
 import numpy as np
 from tqdm.auto import tqdm
+from scipy.spatial.qhull import QhullError
 from scipy.spatial import ConvexHull
 import tempfile
 import zipfile
@@ -177,7 +178,7 @@ def gaussian_mask_growing_segmentation(embedding, seed_map, sigma_map, seed_scor
     return segmentation
 
 
-def compute_global_segmentation(raw_volume, model, use_cuda=False):
+def compute_global_segmentation(raw_volume, model, use_cuda=False, min_cluster_size=100):
     if len(raw_volume.shape) == 2:
         raw_volume = raw_volume[None]
 
@@ -260,7 +261,7 @@ def compute_global_segmentation(raw_volume, model, use_cuda=False):
     global_segmentation = np.stack(
         [gaussian_mask_growing_segmentation(
             embedding[i], seed_map[i, 0], sigma_map[i, 0],
-            min_cluster_size=100,
+            min_cluster_size=min_cluster_size,
             seed_score_threshold=0.6,  # TODO: make a parameter
 
         ).cpu().numpy()
@@ -273,14 +274,22 @@ def extract_convex_hulls(segmentation, ignore_label=0, labels=None):
     xy = np.stack(np.mgrid[:segmentation.shape[0], :segmentation.shape[1]], axis=-1)[:, :, ::-1]
     polygons = []
     hulls = []
+    good_labels = []  # to store labels of segments for which the computation of the convex hull was successful
     for label in np.unique(segmentation) if labels is None else labels:
         if label == ignore_label:
             continue
-        points = xy[segmentation==label]
-        hull = ConvexHull(points)
-        hulls.append(hull)
-        polygons.append(points[hull.vertices])
-    return hulls, polygons
+        points = xy[segmentation == label]
+        try:
+            hull = ConvexHull(points)
+            hulls.append(hull)
+            polygons.append(points[hull.vertices])
+            good_labels.append(label)
+        except QhullError as e:
+            print('Skipping segment due to Error while trying to compute its convex hull:')
+            print(e)
+            print()
+
+    return hulls, polygons, good_labels
 
 
 def get_flattened_border(array, width=1):
@@ -310,14 +319,16 @@ def postprocess_segmentation(segmentation, area_ratio_threshold=0.9):
 
     labels = np.array([label for label in np.unique(segmentation) if label != ignore_label])
 
-    hulls, polys = extract_convex_hulls(segmentation, ignore_label=ignore_label, labels=labels)
+    hulls, polys, hull_labels = extract_convex_hulls(segmentation, ignore_label=ignore_label, labels=labels)
     hull_areas = np.array([hull.volume for hull in hulls])
     segment_areas = np.array([np.sum(segmentation == label)
-                              for label in np.unique(segmentation) if label != ignore_label])
+                              for label in hull_labels])
 
-    bad_cells = segment_areas / hull_areas < area_ratio_threshold
-    for label in labels[bad_cells]:
-        segmentation[segmentation == label] = ignore_label
+    # good labels are those for which we can compute a convex hull, and the area of the hull is not too big.
+    good_labels = np.array(hull_labels)[segment_areas / hull_areas >= area_ratio_threshold]
+    for label in labels:
+        if label not in good_labels:
+            segmentation[segmentation == label] = ignore_label
     return segmentation
 
 
@@ -402,7 +413,7 @@ def write_imagej_polygon_roi(coords, name, path, stroke_width=2, stroke_col='88F
 
 def save_rois(segmentation, out_file='roiset.zip'):
     ignore_label = 0
-    hulls, polys = extract_convex_hulls(segmentation, ignore_label=ignore_label)
+    hulls, polys, _ = extract_convex_hulls(segmentation, ignore_label=ignore_label)
     with tempfile.TemporaryDirectory() as tempdir:
         for i, poly in enumerate(np.array(polys)):
             write_imagej_polygon_roi(poly, f'cell_{str(i).rjust(4, "0")}', tempdir)
@@ -419,7 +430,7 @@ if __name__ == '__main__':
     from imageio import imread
     import argparse
 
-    parser = argparse.ArgumentParser(description='Predict ')
+    parser = argparse.ArgumentParser(description='Predict ImageJ ROIs for Yeast Cells.')
     parser.add_argument('--input_location', '-i', type=str, default='data',
                         help='Input data location. Can either be a directory or a path to a TIF file.')
     parser.add_argument('--output_directory', '-o', type=str, default=None,
@@ -430,14 +441,12 @@ if __name__ == '__main__':
     parser.add_argument('--use_gpu', '-g', dest='use_gpu', action='store_const',
                         const=True, default=False,
                         help='Whether or not to use the GPU. ')
-
+    parser.add_argument('--min_size', type=int, default=100)
     args = parser.parse_args()
 
     model_path = args.model
     data_path = args.input_location
     output_dir = args.output_directory
-    if output_dir is None:
-        output_dir = data_path
 
     print('Loading model')
     model = torch.load(model_path)
@@ -446,7 +455,6 @@ if __name__ == '__main__':
     assert os.path.exists(data_path), f'Data not found: Path {data_path} does not exist.'
     if os.path.isfile(data_path):
         data_dir = os.path.dirname(data_path)
-        print(data_dir)
         if data_path.endswith('.h5'):
             print('Loading hdf5 data volume')
             with h5py.File(data_path, 'r') as f:
@@ -455,7 +463,6 @@ if __name__ == '__main__':
         elif data_path.endswith('.tif') or data_path.endswith('.tiff'):
             print(f'Loading .tif image at {data_path}')
             raw_volume = np.array(imread(data_path))[None]
-            print('.'.join(os.path.split(data_path)[-1].split('.')[:-1]))
             image_names = ['.'.join(os.path.basename(data_path).split('.')[:-1])]
         else:
             assert False, f'Bad data type {data_path.split(".")[-1]}. Need directory, tif or h5 file.'
@@ -484,11 +491,18 @@ if __name__ == '__main__':
     raw_volume /= np.std(raw_volume.reshape(raw_volume.shape[0], -1), axis=-1)[:, None, None]
 
     # compute segmentation
-    seg = compute_global_segmentation(raw_volume, model, use_cuda=args.use_gpu)
+    seg = compute_global_segmentation(
+        raw_volume, model,
+        use_cuda=args.use_gpu,
+        min_cluster_size=args.min_size,
+    )
     seg = np.stack([postprocess_segmentation(s)
                     for s in tqdm(seg, desc='Postprocessing segmentations')])
 
     # save results
+    if output_dir is None:
+        output_dir = data_dir
+
     for i, s in enumerate(seg):
         out_file = os.path.join(output_dir, image_names[i] + '_roiset.zip')
         save_rois(s, out_file)
