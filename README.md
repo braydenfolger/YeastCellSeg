@@ -1,7 +1,7 @@
 # YeastInference
 
 ## Installation
-These instructions have only been tested on Ubuntu, but should also work on other operating systems.
+These instructions have only been tested on Ubuntu and Macintosh, but should also work on other operating systems.
 1. Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) with python 3.7
 2. Create a new conda environment and activate it:
     ```bash
@@ -41,4 +41,4 @@ python predict_rois.py
 ```
 The predictions should be generated as zip files next to the input images.
 
-For further options, please run `python predict_rois.py -h`.
+To learn about further options, please run `python predict_rois.py -h`.
