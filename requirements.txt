@@ -5,4 +5,4 @@ h5py==2.9.0
 dill==0.3.0
 networkx==2.3
 pyyaml==4.2b4
--e git+https://github.com/Steffen-Wolf/embeddingutils#egg=embeddingutils-0.1
+-e git+https://github.com/Steffen-Wolf/embeddingutils.git
